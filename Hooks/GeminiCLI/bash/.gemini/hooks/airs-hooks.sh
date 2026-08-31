@@ -186,12 +186,21 @@ render() {
         esac
       fi ;;
     codex)
+      # Codex 0.150.0 (verified in codex-rs source + measured live): blocking is
+      # STDOUT-JSON on exit 0, NEVER exit 2 — Codex reads its shell WRAPPER's exit
+      # status verbatim (PowerShell collapses any child failure to 1) and any code
+      # other than 0/2 is "hook exited with code {n}" = fail-OPEN. Also: stderr is
+      # ignored on exit 0, so warnings ride the universal systemMessage field, and
+      # an empty "reason" converts a block into a failure (jq -e guards upstream).
       if [ "$kind" = "block" ]; then
         case "$IEVENT" in
-          UserPromptSubmit|PreToolUse) code=2 ;;
+          UserPromptSubmit) out="$(jq -nc --arg r "$text" '{decision:"block",reason:$r}')" ;;
+          PreToolUse)  out="$(jq -nc --arg r "$text" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}')" ;;
           PostToolUse) out="$(jq -nc --arg r "$text" '{decision:"block",reason:$r,hookSpecificOutput:{hookEventName:"PostToolUse"}}')" ;;
           Stop)        out="$(jq -nc --arg r "$text" '{continue:false,stopReason:$r}')" ;;
         esac
+      elif [ "$kind" = "warn" ]; then
+        out="$(jq -nc --arg m "$text" '{systemMessage:("[Prisma AIRS] "+$m)}')"
       else
         [ "$IEVENT" = "Stop" ] && out='{"continue": true}'
       fi ;;
@@ -279,7 +288,14 @@ emit_nojq_block() {
       exit 0 ;;
     cline)
       printf '{"cancel":true,"errorMessage":"%s"}' "$msg"; exit 0 ;;
-    *) # codex / devin / gemini / antigravity block input via exit 2 (no stdout needed)
+    codex)
+      # Codex blocks via stdout JSON on exit 0 (exit codes die in its shell wrapper).
+      case "$IEVENT" in
+        PreToolUse)       printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}' "$msg" ;;
+        UserPromptSubmit) printf '{"decision":"block","reason":"%s"}' "$msg" ;;
+      esac
+      printf '\n🚫 %s\n\n' "$msg" >&2; exit 0 ;;
+    *) # devin / gemini / antigravity block input via exit 2 (no stdout needed)
       printf '\n🚫 %s\n\n' "$msg" >&2; exit 2 ;;
   esac
 }

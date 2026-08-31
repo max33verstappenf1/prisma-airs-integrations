@@ -123,13 +123,20 @@ function Render([string]$kind, [string]$text) {
       }
     }
     'codex' {
+      # Codex 0.150.0 (verified in codex-rs source + measured live on Windows):
+      # blocking is STDOUT-JSON on exit 0, NEVER exit 2 — Codex reads its shell
+      # WRAPPER's exit status verbatim and PowerShell collapses any child failure
+      # to 1; anything other than 0/2 is "hook exited with code {n}" = fail-OPEN.
+      # stderr is ignored on exit 0, so warnings ride systemMessage.
       if ($kind -eq 'block') {
         switch ($IEvent) {
-          { $_ -in @('UserPromptSubmit','PreToolUse') } { $code = 2 }
+          'UserPromptSubmit' { $out = @{ decision='block'; reason=$text } | ConvertTo-Json -Compress -Depth 6 }
+          'PreToolUse'       { $out = @{ hookSpecificOutput = @{ hookEventName='PreToolUse'; permissionDecision='deny'; permissionDecisionReason=$text } } | ConvertTo-Json -Compress -Depth 6 }
           'PostToolUse' { $out = @{ decision='block'; reason=$text; hookSpecificOutput=@{ hookEventName='PostToolUse' } } | ConvertTo-Json -Compress -Depth 6 }
           'Stop'        { $out = @{ continue=$false; stopReason=$text } | ConvertTo-Json -Compress -Depth 6 }
         }
-      } elseif ($IEvent -eq 'Stop') { $out = '{"continue":true}' }
+      } elseif ($kind -eq 'warn') { $out = @{ systemMessage = ("[Prisma AIRS] " + $text) } | ConvertTo-Json -Compress -Depth 6 }
+      elseif ($IEvent -eq 'Stop') { $out = '{"continue":true}' }
     }
     'cursor' {
       # Cursor reads decisions from STDOUT. Pre-tool hard-blocks via permission=deny.

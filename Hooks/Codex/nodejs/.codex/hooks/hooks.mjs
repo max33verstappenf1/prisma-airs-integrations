@@ -389,6 +389,27 @@ function names(toolName) {
   }
   return { server: `claude-code/${toolName || "unknown"}`, tool: toolName || "unknown" };
 }
+function primaryOutputSurface(resp) {
+  if (typeof resp === "string") return resp.length > 0 ? resp : null;
+  if (resp == null || typeof resp !== "object") return null;
+  const values = [];
+  const walk = (v, depth) => {
+    if (depth > 64 || values.length > 2) return;
+    if (typeof v === "string") {
+      if (v.length > 0 && !values.includes(v)) values.push(v);
+      return;
+    }
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x, depth + 1);
+      return;
+    }
+    if (v && typeof v === "object") {
+      for (const x of Object.values(v)) walk(x, depth + 1);
+    }
+  };
+  walk(resp, 0);
+  return values.length === 1 ? values[0] : null;
+}
 function collectStrings(value, out = [], depth = 0) {
   if (depth > 64) return out;
   if (typeof value === "string") {
@@ -523,9 +544,11 @@ async function tryMask(input, plan, cfg, scanMeta, event) {
     return null;
   }
   if (event === "PostToolUse" && plan.kind === "toolOutput") {
-    const v = await scan(cfg, { response: plan.text }, scanMeta);
+    const surface = primaryOutputSurface(input.tool_response ?? input.tool_result);
+    if (!surface || surface.length > cfg.maxContentChars) return null;
+    const v = await scan(cfg, { response: surface }, scanMeta);
     const masked = v.maskedResponse;
-    if (isPureDlpMask(v, masked, plan.text)) {
+    if (isPureDlpMask(v, masked, surface)) {
       return { kind: "maskOutput", updatedOutput: masked, note: `Prisma AIRS masked sensitive data in ${input.tool_name} output (scan_id: ${v.scanId})` };
     }
     if (v.action === "block") return { kind: "block", reason: reasonText(v) };
@@ -654,21 +677,23 @@ var codexAdapter = {
       case "allow":
         return event === "Stop" ? { exitCode: 0, stdout: '{"continue": true}' } : { exitCode: 0 };
       case "warn":
-        return event === "Stop" ? { exitCode: 0, stdout: '{"continue": true}', stderr: `[Prisma AIRS] ${decision.message}
-` } : { exitCode: 0, stderr: `[Prisma AIRS] ${decision.message}
-` };
+        return { exitCode: 0, stdout: JSON.stringify({ systemMessage: `[Prisma AIRS] ${decision.message}` }) };
       case "block": {
-        const stderr = `
-\u{1F6AB} ${decision.reason}
-
-`;
-        if (event === "UserPromptSubmit" || event === "PreToolUse") {
-          return { exitCode: 2, stderr };
+        const reason = (decision.reason ?? "").trim() || "Blocked by Prisma AIRS";
+        if (event === "UserPromptSubmit") {
+          return { exitCode: 0, stdout: JSON.stringify({ decision: "block", reason }) };
+        }
+        if (event === "PreToolUse") {
+          return { exitCode: 0, stdout: JSON.stringify({ hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: reason
+          } }) };
         }
         if (event === "PostToolUse") {
-          return { exitCode: 0, stdout: JSON.stringify({ decision: "block", reason: decision.reason, hookSpecificOutput: { hookEventName: "PostToolUse" } }), stderr };
+          return { exitCode: 0, stdout: JSON.stringify({ decision: "block", reason, hookSpecificOutput: { hookEventName: "PostToolUse" } }) };
         }
-        return { exitCode: 0, stdout: JSON.stringify({ continue: false, stopReason: decision.reason }), stderr };
+        return { exitCode: 0, stdout: JSON.stringify({ continue: false, stopReason: reason }) };
       }
       // Codex can't rewrite; masking is gated off for it, so these are unreachable.
       // Defensive: the content was a primary-allowed pure-DLP surface — allow.
