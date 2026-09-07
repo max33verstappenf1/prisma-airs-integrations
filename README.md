@@ -35,6 +35,7 @@ This repository collects example configurations, sample code, and reference patt
 | [Kong (Custom Plugin v2 — MCP + buffered SSE)](./Kong/custom-plugin-v2/) | API Gateway | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [Kong (Request Callout)](./Kong/request-callout/) | API Gateway | ✅ | ❌ | ❌ | ❌ | ❌ |
 | [LiteLLM](./LiteLLM/) | AI Gateway | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| [Bifrost](./Bifrost/) | AI Gateway | ✅ | ✅ | ⚠️ | ❌ | ❌ |
 | [n8n](./n8n/) | Workflow Automation | ✅ | ✅ | ❌ | ❌ | ❌ |
 | [Portkey](./Portkey/) | AI Gateway | ✅ | ✅ | ❌ | ❌ | ❌ |
 | [TrueFoundry](./TrueFoundry/) | AI Gateway | ✅ | ✅ | ⚠️ | ❌ | ❌ |
