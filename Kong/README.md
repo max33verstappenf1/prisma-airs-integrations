@@ -13,6 +13,7 @@ The contents of this repository are community examples and reference implementat
 | [Custom Plugin (v1)](custom-plugin/) | ✅ | ✅ | ❌ | ✅ (via AI Gateway) | LLM-only traffic, full ai-proxy compatibility |
 | [Custom Plugin (v2 — MCP-aware)](custom-plugin-v2/) | ✅ | ✅ | ✅ | ⚠️ (OpenAI + Bedrock Converse native) | LLM + MCP `tools/call` inspection |
 | [Request Callout](request-callout/) | ✅ | ❌ | ❌ | ❌ | Kong Konnect SaaS, OpenAI only |
+| [Custom Plugin (v3)](custom-plugin-v3/) | ✅ | ✅ | ✅ | ✅ (native, 9 shapes) | Full MCP method coverage, buffered SSE, DLP, and a test suite |
 
 ### Multi-Provider Support
 
@@ -28,9 +29,19 @@ Kong's AI Proxy plugin normalizes requests/responses to OpenAI format. See [cust
 
 > v2 runs at priority 1000 (above ai-proxy at 770) and parses OpenAI + Bedrock Converse request shapes directly. Use v1 if you need ai-proxy normalization to run first.
 
-### MCP tool call inspection (v2 only)
+### MCP tool call inspection (v2 and v3)
 
 v2 detects JSON-RPC 2.0 MCP requests and scans `tools/call` as AIRS `tool_event` payloads in both directions. MCP control messages (`initialize`, `tools/list`, etc.) are bypassed. See [custom-plugin-v2 README](custom-plugin-v2/README.md) for details.
+
+v3 extends this to the rest of the MCP surface. Every method carrying caller-chosen or
+server-supplied text is scanned on both legs — `resources/read`, `prompts/get`,
+`completion/complete`, `sampling/createMessage`, `elicitation/create` and vendor extensions —
+and denials are returned in-protocol as JSON-RPC errors carrying the caller's own request id,
+so a client session survives a block. Tool *catalogues* are scanned on the way back, which is
+the tool-poisoning surface: a malicious tool description in a `tools/list` reply, or poisoned
+`instructions` in an `initialize` reply, is refused before it reaches the model. Only genuinely
+content-free control messages (`ping`, `notifications/*`) are bypassed. See
+[custom-plugin-v3 README](custom-plugin-v3/README.md#mcp-method-coverage) for the measured matrix.
 
 ## Quick Start
 
