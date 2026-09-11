@@ -119,9 +119,20 @@ graph TD
 | **Companion** | `plugin/prisma-airs-intercept-postproxy/` | 760 | `ai-proxy`'s normalised body | ❌ | ❌ refuses | You run `ai-proxy` and want to scan what the model actually received after normalisation. |
 | **Request-callout** | `plugin/request-callout/` | n/a | the request leg only | ❌ | ❌ | The gateway cannot load custom Lua at all. Config-only, prompt scanning only. |
 
-Both Lua lineages install side by side on one gateway and can be used on different
-routes. They declare distinct plugin names, so a data plane can no longer be running
-one while an operator believes it is running the other.
+The two v3 Lua flavors above install side by side on one gateway and can be used on
+different routes: they declare distinct plugin names, so a data plane can no longer be
+running one while an operator believes it is running the other.
+
+**That does not extend to v1 and v2.** The primary flavor declares the plugin name
+`prisma-airs-intercept` — the same name declared by `Kong/custom-plugin` (v1) and
+`Kong/custom-plugin-v2`, all three of which install to
+`kong/plugins/prisma-airs-intercept/` and are enabled by the same `KONG_PLUGINS` entry.
+Installing v3's primary therefore **replaces** whichever of them is on the gateway
+rather than joining it, and the priority carried by that name changes with it:
+**1000 → 890** coming from v2, **760 → 890** coming from v1. Kong runs `access`
+handlers in descending priority, so anything on your routes whose priority falls
+between the old number and the new one changes sides relative to the scan. See
+[Upgrading from v1 or v2](docs/DEPLOYMENT.md#1a-upgrading-from-v1-or-v2).
 
 ---
 
@@ -133,7 +144,7 @@ one while an operator believes it is running the other.
 | **Topology** | Traditional, DB-less or hybrid — all three are supported and verified. Konnect **Serverless** cannot load custom Lua at all; use the `request-callout` flavor there. |
 | **Lua** | `lua-resty-http` must be available to the gateway. Kong registers it as a rock, so `luarocks make` resolves it from the image. `lua-cjson` comes from OpenResty and is deliberately *not* declared — see [Why `lua-cjson` is not a declared dependency](docs/DEPLOYMENT.md). |
 | **Build** | `luarocks`, to install the rock. Running the test suite additionally needs `luajit` and a `lua-cjson` built against it. |
-| **Network** | Outbound HTTPS (443) from **every data plane** to your AIRS regional host — see [Network egress](docs/DEPLOYMENT.md#network-egress) for the three hostnames to allowlist. |
+| **Network** | Outbound HTTPS (443) from **every data plane** to your AIRS regional host — see [Network egress](docs/DEPLOYMENT.md#3b-network-egress) for the three hostnames to allowlist. |
 | **Tenant** | Access to Strata Cloud Manager, a configured **Security Profile**, and a **Prisma AIRS API Key** for an API Intercept application. |
 
 The API key is supplied to the gateway as an environment variable and referenced from

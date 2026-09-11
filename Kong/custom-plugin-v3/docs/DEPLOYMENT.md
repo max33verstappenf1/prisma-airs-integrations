@@ -28,11 +28,54 @@ denials are returned in-protocol as JSON-RPC errors. See **MCP method coverage**
 the [README](../README.md#mcp-method-coverage).
 
 
-**They can now be installed side by side.** They previously could not: both
-declared the plugin name `prisma-airs-intercept`, so installing one replaced the
-other, and `PRIORITY` was the only way to tell which file a data plane was really
-running. Kong requires the plugin name to match its directory under
+**The two flavors above can now be installed side by side.** They previously could
+not: both declared the plugin name `prisma-airs-intercept`, so installing one
+replaced the other, and `PRIORITY` was the only way to tell which file a data plane
+was really running. Kong requires the plugin name to match its directory under
 `kong/plugins/`, so each name is derived from its directory rather than chosen.
+
+---
+
+## 1a. Upgrading from v1 or v2
+
+**Side by side stops at the v3 directory.** `Kong/custom-plugin` (v1) and
+`Kong/custom-plugin-v2` both declare the plugin name `prisma-airs-intercept`, which
+is also what the v3 primary declares. All three install to
+`kong/plugins/prisma-airs-intercept/` and are enabled by the same `KONG_PLUGINS`
+entry, so **installing the v3 primary replaces v1 or v2 on that gateway** — it does
+not run alongside it. There is one plugin by that name on a data plane, and the files
+on disk decide which one it is.
+
+Two consequences an operator has to plan for:
+
+| | v1 | v2 | v3 primary |
+|---|:---:|:---:|:---:|
+| Plugin name | `prisma-airs-intercept` | `prisma-airs-intercept` | `prisma-airs-intercept` |
+| `PRIORITY` | 760 | 1000 | 890 |
+
+1. **The priority attached to the name changes**, to 890 from 1000 (v2) or 760 (v1).
+   Kong runs `access` handlers in descending priority, so any other plugin on the
+   same route whose priority sits between the old value and 890 swaps sides relative
+   to the scan. Coming from v2 the scan moves *later*; coming from v1 it moves
+   *earlier*. The "Runs after" row in §1 states where 890 lands: after `jwt`,
+   `key-auth`, `oauth2`, `acl` and `rate-limiting`, and before Kong's AI plugin band
+   at ~760-780. Re-read your route's plugin list against that before cutting over.
+2. **Your existing plugin config stays valid, and that is the trap.** v3's schema is
+   a strict superset — 42 declared fields against v2's 16 and v1's 8, with none
+   removed or renamed — so a config row written for v1 or v2 still loads. What it
+   does not carry is any opinion about the 26 fields v3 adds, so those take their
+   defaults the moment you cut over. Four of them change behaviour on a route that
+   previously had none: `scan_responses` defaults to **true**, so the response leg
+   starts being scanned and can now refuse a reply that used to pass (§4d);
+   `enforcement_mode` defaults to **enforce**; and `on_api_error` and `on_scan_error`
+   both default to **block**, so an unreachable AIRS or an uninspectable body fails
+   closed rather than passing traffic. Those are the right defaults for a security
+   control and they are deliberate, but decide them explicitly instead of inheriting
+   them during an upgrade window.
+
+If what you want is v1's position in the chain, take the **`-postproxy` companion**
+instead: it continues that lineage at `PRIORITY = 760` under its own plugin name, so
+it can coexist with the primary rather than replace it.
 
 ---
 
