@@ -61,28 +61,7 @@ an `initialize` reply, are both refused on the way back.
 > enforcement works, use a payload your profile blocks *on that leg*, or you will
 > conclude the plugin is broken when it is not.
 
----|---|---|---|
-| `tools/call` | `tool_event` | request + response | ✅ scanned, verdict enforced |
-| `sampling/createMessage`, `elicitation/create` | `prompt` | request + response | ✅ scanned, verdict enforced |
-| `ping`, `initialized`, `logging/setLevel`, `notifications/*` | not submitted | — | passed through unscanned, by design — they carry no caller content |
-| `resources/read`, `prompts/get`, `completion/complete` | `tool_event` | request + response | ❌ AIRS `400 unsupported method` → `503` |
-| any other method carrying `params` | `tool_event` | request + response | ❌ AIRS `400 unsupported method` → `503` |
-| `initialize`, `resources/list`, `prompts/list`, `resources/templates/list`, `roots/list` | `tool_event` | response only | ❌ AIRS `400 unsupported method` → `503` |
-| `tools/list` | `tool_event` | response only | ❌ the method is accepted, the payload is not: AIRS expects a bare array of MCP tool objects, the plugin submits the JSON-RPC `result` object |
-
-> [!WARNING]
-> **Do not place this plugin in front of an MCP server yet.** Every MCP session opens
-> with `initialize`, and `initialize` is on the refused list, so with the shipped
-> defaults no session gets past its first message. Setting `scan_responses = false`
-> does not rescue it — that removes the only leg a catalogue method has, which the
-> plugin correctly reports as a scan gap and also refuses. `tools/call` is the one
-> method that works end to end today.
->
-> This is an API-compatibility gap, not a Kong or Lua defect: the same payloads are
-> refused when sent to AIRS directly with `curl`, with no gateway involved. **The LLM
-> paths are unaffected** — prompt, response, streaming, DLP and tool calls carried
-> inside a chat completion all work.
-
+---
 
 Additional capabilities beyond the standard phases:
 

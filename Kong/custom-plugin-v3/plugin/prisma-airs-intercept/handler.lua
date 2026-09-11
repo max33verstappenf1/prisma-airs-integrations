@@ -705,6 +705,26 @@ local function parse_sse(raw)
     return payloads
 end
 
+-- An OpenAI tool call carries its payload in `function.name` and
+-- `function.arguments`, and NEITHER is message content. The arguments are the
+-- model's own choice of where to send money, which file to read, which URL to
+-- fetch -- so a reply that carries a tool call and no prose is not an empty
+-- reply, it is the interesting one. Both the streamed and the buffered path
+-- fold through here so the two legs cannot drift apart again: they did, and the
+-- buffered leg was the one that scanned nothing.
+local function fold_tool_calls(out, tool_calls)
+    if type(tool_calls) ~= "table" then return end
+    for _, tc in ipairs(tool_calls) do
+        if type(tc) == "table" then
+            local fn = tc["function"]
+            if type(fn) == "table" then
+                if type(fn.name) == "string" then out[#out + 1] = fn.name end
+                if type(fn.arguments) == "string" then out[#out + 1] = fn.arguments end
+            end
+        end
+    end
+end
+
 -- Pure extractors. Each takes the FULL decoded item list ({ raw, decoded }) and
 -- walks it once, appending text + tool-call args in stream order.
 
@@ -719,15 +739,7 @@ local function extract_openai_chat(items)
                     if type(delta.content) == "string" then
                         out[#out + 1] = delta.content
                     end
-                    if type(delta.tool_calls) == "table" then
-                        for _, tc in ipairs(delta.tool_calls) do
-                            local fn = tc["function"]
-                            if type(fn) == "table" then
-                                if type(fn.name) == "string" then out[#out + 1] = fn.name end
-                                if type(fn.arguments) == "string" then out[#out + 1] = fn.arguments end
-                            end
-                        end
-                    end
+                    fold_tool_calls(out, delta.tool_calls)
                 end
             end
         end
@@ -1617,6 +1629,13 @@ local function build_prompt_payload(config, scan_type, request_body, response_bo
                             local t = content_text(c)
                             if t then texts[#texts + 1] = t end
                         end
+                        -- `content` alone made a tool call invisible here while
+                        -- the streamed path scanned it, so the same completion
+                        -- was judged differently depending on a flag the CALLER
+                        -- sets. A tool-call-only reply (`content: null`) also
+                        -- extracted nothing at all, which is a scan gap, which
+                        -- fails closed -- every function-calling reply refused.
+                        fold_tool_calls(texts, ch.message.tool_calls)
                     end
                 end
                 content_object.response = #texts > 0 and table.concat(texts, "\n") or nil

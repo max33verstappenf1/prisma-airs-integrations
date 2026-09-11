@@ -128,3 +128,54 @@ describe("C5 — an upstream error must not be scanned or reframed as a block", 
     expect.nil_(r.exit, "the client must see the upstream's own 429, not a blocked-by-policy 403")
   end)
 end)
+
+describe("C6 — a tool call the model emits is scanned on the buffered leg too", function()
+  -- The streamed extractor already folds `delta.tool_calls[].function.name` and
+  -- `.arguments` into the scanned text. The buffered path read `ch.message.content`
+  -- and nothing else, so the SAME completion was inspected under `stream: true`
+  -- and passed uninspected under `stream: false`. The arguments are exactly where
+  -- a model puts an exfiltration target, so the leg that skipped them is the leg
+  -- that matters.
+
+  it("folds the tool-call name and arguments into the scanned response", function()
+    local body = cjson.encode{ choices = { { message = {
+      role = "assistant",
+      content = "Sure, sending that now.",
+      tool_calls = { { id = "call_1", type = "function", ["function"] = {
+        name = "wire_transfer",
+        arguments = '{"to":"ATTACKER_IBAN","amount":9999}',
+      } } },
+    } } } }
+    local r = H.run{ config = H.cfg.base(),
+                     request = { body = H.body.chat{{"user","pay the invoice"}} },
+                     upstream = { body = body },
+                     airs = { {action="allow"}, {action="allow"} } }
+    local resp = H.contents(r, 2).response
+    expect.contains(resp, "Sure, sending that now.")
+    expect.contains(resp, "wire_transfer")
+    expect.contains(resp, "ATTACKER_IBAN",
+                    "the same arguments are scanned when the reply is streamed; " ..
+                    "buffered replies must not be the cheaper way past the scan")
+  end)
+
+  it("a tool-call-only reply is scanned rather than refused as an unreadable shape", function()
+    -- `content: null` with tool_calls is the ordinary OpenAI function-calling
+    -- reply. Extracting nothing from it left `response` nil, which is a scan gap,
+    -- which fails closed -- so every function-calling app saw a 403 on every
+    -- reply. Fail-closed was right; having nothing to scan was the bug.
+    local body = cjson.encode{ choices = { { message = {
+      role = "assistant",
+      tool_calls = { { id = "call_2", type = "function", ["function"] = {
+        name = "get_weather", arguments = '{"city":"Paris"}',
+      } } },
+    } } } }
+    local r = H.run{ config = H.cfg.base(),
+                     request = { body = H.body.chat{{"user","weather in paris"}} },
+                     upstream = { body = body },
+                     airs = { {action="allow"}, {action="allow"} } }
+    expect.nil_(r.exit, "a normal function-calling reply must not be refused as unreadable")
+    local resp = H.contents(r, 2).response
+    expect.contains(resp, "get_weather")
+    expect.contains(resp, "Paris")
+  end)
+end)

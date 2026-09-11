@@ -95,7 +95,9 @@ Use this plugin where the bundled one demonstrably does not reach:
 
 | Requirement | `ai-custom-guardrail` | this plugin |
 |---|---|---|
-| Prompt / response scanning on LLM routes | yes | yes |
+| Prompt scanning on LLM routes | yes | yes |
+| Response scanning, **buffered** reply | yes | yes |
+| Response scanning, **streamed** reply (`stream: true`) | **no — the `OUTPUT` phase is skipped, silently** | yes for OpenAI Chat, OpenAI Responses and Anthropic Messages; any other stream shape is a scan gap and fails closed under `auto` |
 | Vault-referenced key | yes | yes (`referenceable`, `encrypted`) |
 | Fail-open / fail-closed switch | yes | yes (`on_scan_error`, `on_api_error`) |
 | **Prometheus / Kong metrics** | yes — custom metrics | **no** — see below |
@@ -114,12 +116,55 @@ can count. That is genuinely useful and it is not a metric, and the row an
 operator reads to decide "no gap on the LLM basics, keep the bespoke plugin" has
 to say so.
 
+**On streaming, precisely.** That row used to read "yes" on both sides too, and
+it hid the difference that matters most on an LLM route. Kong documents the
+limitation as a class — *"You can't add AI Policies that use the Response
+Transformer Policy or otherwise trigger in the response phase when streaming is
+configured"*
+([AI Gateway streaming](https://developer.konghq.com/ai-gateway/streaming/)) —
+and a community integration measured the specific consequence for
+`ai-custom-guardrail` on a live gateway on 2026-09-08: with `stream: true` the
+guardrail service receives **no call at all**, there is no error and no warning,
+and every SSE chunk reaches the client
+([tbortolossi/prisma-airs-kong-ai-gateway](https://github.com/tbortolossi/prisma-airs-kong-ai-gateway)).
+A caller therefore opts itself out of response scanning with one flag in its own
+request body. Kong gives you the switch to close that — set `ai-proxy`'s or
+`ai-proxy-advanced`'s `response_streaming: deny`, which *"Prevents the caller
+from setting stream=true in their request"* — and if you run
+`ai-custom-guardrail` on a route that must stream, set it, or state plainly that
+those routes have prompt-only coverage.
+
+This plugin reassembles the stream and scans it instead, which is why the row
+splits. Be equally precise about its limit: `sse_provider` defaults to `auto`,
+which recognises OpenAI Chat, OpenAI Responses and Anthropic Messages. A stream
+it does not recognise — Gemini `alt=sse`, Cohere v2 — reconstructs to nothing,
+which is a scan gap, which **fails closed**: a 403 on every response, not a
+silent pass. `sse_provider = "raw"` is the opt-out, harvesting string values from
+the frames and scanning that best-effort text. Choose deliberately: silently
+unscanned is the failure mode this plugin is built to avoid, and a 403 that
+surprises an operator is the price.
+
 The audit reaches the same conclusion about MCP on its own terms: the bundled
 plugin "does **not** parse JSON-RPC; it has no notion of MCP `tools/call`, no
 `tool_event` payload shape, and no allowlist of control methods."
 
 A common answer is **both**: `ai-custom-guardrail` on the plain LLM routes, this
 plugin on the MCP route. They are separate Kong routes and do not interact.
+
+**Where this plugin cannot go at all.** Everything above assumes a gateway that
+loads custom Lua. **Kong AI Gateway 2.x** — the separate runtime with its own
+control plane, where configuration is expressed as AI entities and AI Policies
+rather than as plugins — is the case where it does not. Kong's 2.0 configuration
+reference does document `plugins` and `lua_package_path` at "Min Version: 2.0",
+so the runtime is not the obstacle; what Kong documents nowhere is how to
+register a custom plugin against an AI Gateway 2.x **control plane**, and its
+custom-plugin pages are scoped "Uses: Kong Gateway". Treat 2.x as unproven
+rather than as either supported or refused, and note that the v2 policy
+catalogue has no Prisma AIRS type to select either. For that estate the
+configuration-only path is the one that works today — Kong's own
+`ai-custom-guardrail`, wired to AIRS, for which
+[tbortolossi/prisma-airs-kong-ai-gateway](https://github.com/tbortolossi/prisma-airs-kong-ai-gateway)
+is a worked reference.
 
 ### Datakit
 
@@ -242,6 +287,29 @@ Your actual options:
 The SSE support that *is* here — provider-aware frame reconstruction, scan
 limits, fail-closed truncation — is about scanning a buffered stream correctly,
 not about streaming it through.
+
+**Which streams it can reconstruct, and the escape hatch.** `sse_provider`
+defaults to `auto`, which recognises three frame shapes: OpenAI Chat
+(`choices[].delta`), OpenAI Responses (`response.*` events) and Anthropic
+Messages (`content_block_*` / `message_*`, including `thinking_delta`). That is
+narrower than the nine request shapes the plugin parses, and the difference is
+deliberate — a stream shape nobody has reconstructed is a shape nobody has
+verified. A stream `auto` does not recognise reconstructs to nothing, which the
+plugin reports as a scan gap, which under the default `on_scan_error = "block"`
+returns **403 on every response**. That is fail-closed working as designed, and
+on a Gemini `alt=sse` or Cohere v2 route it will look exactly like an AIRS
+outage until you know to check here.
+
+Two ways out, and they are not equivalent. `sse_provider = "raw"` harvests the
+string values out of every frame and scans that best-effort text — real coverage,
+no shape knowledge, and some structural noise in what AIRS sees. Setting
+`on_scan_error = "allow"` instead turns the same route into an unscanned one,
+which is the failure mode this plugin exists to avoid. Prefer `raw`.
+
+Note that AWS Bedrock `ConverseStream` never reaches this path at all: it
+returns `application/vnd.amazon.eventstream`, not `text/event-stream`, so it is
+not treated as SSE and `sse_provider = "raw"` does not apply to it. It fails
+closed through the ordinary unrecognised-response-shape gap instead.
 
 ---
 
